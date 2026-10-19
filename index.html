@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>مستخرج النصوص العربية</title>
+  <meta name="description" content="استخرج النصوص العربية من الصور بدقة عالية، كل صورة في مربع مستقل جاهز للنسخ.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Noto+Naskh+Arabic:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="favicon.svg" alt="" width="36" height="36">
+      <div>
+        <h1>مستخرج النصوص العربية</h1>
+        <p>ارفع صورك، وكل صورة يظهر نصها تحتها جاهزاً للنسخ</p>
+      </div>
+    </div>
+    <button id="settingsBtn" class="btn ghost" type="button" aria-label="الإعدادات">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1l-.4-2.6h-4l-.4 2.7a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.4L4.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1c.5.4 1.1.7 1.7 1l.4 2.6h4l.4-2.7c.6-.2 1.2-.6 1.7-1l2.5 1 2-3.4-2.1-1.6ZM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"/></svg>
+      <span>الإعدادات</span>
+    </button>
+  </header>
+
+  <main>
+    <div id="keyBanner" class="banner" hidden>
+      <span>لبدء الاستخراج أضف مفتاح Gemini المجاني مرة واحدة فقط.</span>
+      <button class="btn primary small" type="button" data-open-settings>إضافة المفتاح</button>
+    </div>
+
+    <label id="dropzone" class="dropzone" tabindex="0">
+      <input id="fileInput" type="file" accept="image/*" multiple hidden>
+      <svg viewBox="0 0 24 24" width="44" height="44" aria-hidden="true"><path fill="currentColor" d="M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9v-2H5V5h14v9h2V5a2 2 0 0 0-2-2Zm-4.5 8L11 15.5l-2.5-3L5 17h9l1.5-2 .9-1.2L14.5 11ZM20 16v3h3v2h-3v3h-2v-3h-3v-2h3v-3h2ZM8.5 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"/></svg>
+      <strong>اسحب الصور وأفلتها هنا، أو اضغط لاختيارها</strong>
+      <span>يمكنك أيضاً لصق صورة بـ <kbd>Ctrl</kbd> + <kbd>V</kbd> · تُعالج الصور بالترتيب</span>
+    </label>
+
+    <section id="toolbar" class="toolbar" hidden>
+      <div class="progress">
+        <div class="progress-text"><span id="progressText">0 من 0</span><span id="progressSub" class="muted"></span></div>
+        <div class="bar"><div id="progressBar"></div></div>
+      </div>
+      <div class="actions">
+        <button id="copyAllBtn" class="btn primary" type="button">نسخ الكل</button>
+        <button id="txtBtn" class="btn" type="button">تحميل TXT</button>
+        <button id="docxBtn" class="btn" type="button">تحميل Word</button>
+        <button id="retryErrorsBtn" class="btn" type="button" hidden>إعادة الصور الفاشلة</button>
+        <button id="clearBtn" class="btn danger-ghost" type="button">مسح الكل</button>
+      </div>
+    </section>
+
+    <section id="cards" class="cards" aria-live="polite"></section>
+  </main>
+
+  <footer class="foot">
+    الصور تُرسل مباشرة من متصفحك إلى Google Gemini لاستخراج النص فقط، ومفتاحك محفوظ في هذا المتصفح وحده.
+  </footer>
+
+  <template id="cardTpl">
+    <article class="card">
+      <div class="card-head">
+        <span class="num"></span>
+        <span class="fname" dir="auto"></span>
+        <span class="status"></span>
+      </div>
+      <button class="thumb" type="button" title="اضغط للتكبير">
+        <img alt="">
+      </button>
+      <textarea class="text" dir="rtl" spellcheck="false" placeholder="سيظهر النص هنا…"></textarea>
+      <div class="err" hidden></div>
+      <div class="card-actions">
+        <button class="btn primary small copy" type="button">نسخ</button>
+        <button class="btn small redo" type="button">إعادة الاستخراج</button>
+        <span class="count muted"></span>
+        <button class="btn small danger-ghost del" type="button" aria-label="حذف الصورة">حذف</button>
+      </div>
+    </article>
+  </template>
+
+  <div id="lightbox" class="lightbox" hidden>
+    <button class="lb-close" type="button" aria-label="إغلاق">×</button>
+    <div class="lb-caption"></div>
+    <div class="lb-stage"><img alt=""></div>
+    <div class="lb-hint">اضغط على الصورة للتكبير/التصغير · Esc للإغلاق</div>
+  </div>
+
+  <dialog id="settings" class="settings">
+    <form method="dialog" id="settingsForm">
+      <h2>الإعدادات</h2>
+
+      <label class="field">
+        <span>مفتاح Gemini API</span>
+        <div class="key-row">
+          <input id="keyInput" type="password" autocomplete="off" spellcheck="false" dir="ltr" placeholder="AIza…">
+          <button id="toggleKey" class="btn small" type="button">إظهار</button>
+        </div>
+        <small>احصل على مفتاح مجاني من <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a>. يُحفظ في هذا المتصفح فقط ولا يُرسل إلا إلى Google.</small>
+      </label>
+
+      <label class="field">
+        <span>النموذج</span>
+        <select id="modelSelect"></select>
+        <input id="customModel" type="text" dir="ltr" placeholder="مثال: gemini-3.8-flash" hidden>
+        <small><button id="fetchModels" class="linklike" type="button">جلب النماذج المتاحة لمفتاحي</button> <span id="fetchModelsMsg"></span></small>
+      </label>
+
+      <label class="field">
+        <span>عدد الصور التي تُعالج في نفس الوقت</span>
+        <select id="concSelect">
+          <option value="1">1 (الأبطأ والأكثر أماناً للحدود المجانية)</option>
+          <option value="2">2 (موصى به)</option>
+          <option value="3">3 (أسرع)</option>
+        </select>
+      </label>
+
+      <div class="dialog-actions">
+        <button id="clearKey" class="btn danger-ghost small" type="button">حذف المفتاح</button>
+        <span class="spacer"></span>
+        <button id="cancelSettings" class="btn" type="button">إلغاء</button>
+        <button id="saveSettings" value="save" class="btn primary" type="submit">حفظ</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" defer></script>
+  <script src="app.js" defer></script>
+</body>
+</html>
