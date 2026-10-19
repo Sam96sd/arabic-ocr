@@ -210,6 +210,8 @@ body.has-items .dropzone svg { width: 28px; height: 28px; }
 .key-row { display: flex; gap: 8px; }
 .key-row input { flex: 1; min-width: 0; }
 .linklike { font: inherit; background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; text-decoration: underline; }
+.share-box { padding-top: 14px; border-top: 1px solid var(--border); }
+.err-text { color: var(--danger) !important; }
 .dialog-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .spacer { flex: 1; }
 

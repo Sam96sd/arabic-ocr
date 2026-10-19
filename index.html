@@ -117,11 +117,40 @@
         </select>
       </label>
 
+      <label class="field">
+        <span>كلمة سر الإعدادات</span>
+        <input id="lockPass" type="password" autocomplete="new-password" placeholder="اتركها فارغة إن لم ترد تغييرها">
+        <small><span id="lockState"></span> <button id="removeLock" class="linklike" type="button" hidden>إزالة كلمة السر</button></small>
+      </label>
+
+      <div class="field share-box">
+        <span>مشاركة الأداة مع صديق</span>
+        <div><button id="shareBtn" class="btn small" type="button">نسخ رابط جاهز بمفتاحي</button></div>
+        <small>الرابط يشغّل الأداة عند صديقك بمفتاحك ونموذجك، وتبقى الإعدادات عنده مقفلة بكلمة سرك. لا تنشره علناً، فكل من يملكه يستهلك من حصتك.</small>
+      </div>
+
       <div class="dialog-actions">
         <button id="clearKey" class="btn danger-ghost small" type="button">حذف المفتاح</button>
         <span class="spacer"></span>
         <button id="cancelSettings" class="btn" type="button">إلغاء</button>
         <button id="saveSettings" value="save" class="btn primary" type="submit">حفظ</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="unlock" class="settings">
+    <form id="unlockForm">
+      <h2>الإعدادات مقفلة</h2>
+      <label class="field">
+        <span>أدخل كلمة السر</span>
+        <input id="unlockPass" type="password" autocomplete="current-password" required>
+        <small id="unlockMsg" class="err-text"></small>
+      </label>
+      <div class="dialog-actions">
+        <button id="forgotLock" class="linklike" type="button">نسيت كلمة السر؟</button>
+        <span class="spacer"></span>
+        <button id="cancelUnlock" class="btn" type="button">إلغاء</button>
+        <button class="btn primary" type="submit">فتح</button>
       </div>
     </form>
   </dialog>

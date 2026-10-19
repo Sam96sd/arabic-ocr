@@ -4,15 +4,20 @@
  *  إعدادات عامة
  * ------------------------------------------------------------------ */
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
-const DEFAULT_MODEL = 'gemini-3.8-flash';
+const DEFAULT_MODEL = 'gemini-3.5-flash-lite';
 const MODELS = [
-  { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash (موصى به)' },
-  { id: 'gemini-flash-latest', label: 'Gemini Flash – أحدث إصدار تلقائياً' },
-  { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash' },
-  { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite (أسرع وأخف)' },
+  { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite (الأسرع – موصى به)' },
+  { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash (متوازن)' },
+  { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash (الأدق، أبطأ)' },
   { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite' },
+  { id: 'gemini-flash-latest', label: 'Gemini Flash – أحدث إصدار تلقائياً' },
 ];
-const LS = { key: 'aocr.apiKey', model: 'aocr.model', conc: 'aocr.concurrency' };
+// النماذج التي تقبل أدنى مستوى تفكير (minimal)؛ البقية تُرسل low
+const MINIMAL_THINKING = /flash-lite|3\.6-flash/;
+const LS = {
+  key: 'aocr.apiKey', model: 'aocr.model.v2', conc: 'aocr.concurrency',
+  lockHash: 'aocr.lockHash', lockSalt: 'aocr.lockSalt',
+};
 
 const MAX_SIDE = 2560;            // أقصى طول لضلع الصورة المرسلة
 const MAX_RAW_BYTES = 3.5 * 1024 * 1024; // أصغر من هذا ونوعه مدعوم ← يُرسل كما هو
@@ -70,7 +75,8 @@ function init() {
   for (const id of ['dropzone', 'fileInput', 'toolbar', 'cards', 'progressText', 'progressSub', 'progressBar',
     'copyAllBtn', 'txtBtn', 'docxBtn', 'retryErrorsBtn', 'clearBtn', 'settingsBtn', 'settings', 'settingsForm',
     'keyInput', 'toggleKey', 'modelSelect', 'customModel', 'fetchModels', 'fetchModelsMsg', 'concSelect',
-    'clearKey', 'keyBanner', 'lightbox', 'toast', 'cardTpl']) {
+    'clearKey', 'keyBanner', 'lightbox', 'toast', 'cardTpl', 'lockPass', 'lockState', 'removeLock', 'shareBtn',
+    'unlock', 'unlockForm', 'unlockPass', 'unlockMsg', 'forgotLock', 'cancelUnlock']) {
     els[id] = document.getElementById(id);
   }
 
@@ -118,6 +124,8 @@ function init() {
   els.settingsBtn.addEventListener('click', openSettings);
   document.querySelectorAll('[data-open-settings]').forEach(b => b.addEventListener('click', openSettings));
   setupSettings();
+  setupLock();
+  applySharedLink();
 
   // المكبّر
   setupLightbox();
@@ -204,6 +212,10 @@ function renderCard(item) {
   if (item.status === 'waiting') {
     const s = Math.max(0, Math.ceil((item.waitUntil - Date.now()) / 1000));
     label = `إعادة المحاولة بعد ${s} ث`;
+  } else if (item.status === 'working' && item.startedAt) {
+    label += ` · ${Math.round((Date.now() - item.startedAt) / 1000)} ث`;
+  } else if (item.status === 'done' && item.ms) {
+    label += ` · ${Math.max(1, Math.round(item.ms / 1000))} ث`;
   }
   c.status.textContent = label;
   c.status.dataset.s = item.status;
@@ -326,13 +338,17 @@ async function run(item) {
   state.running++;
   item.status = 'working';
   item.error = '';
+  item.startedAt = Date.now();
+  item.ms = 0;
   item.controller = new AbortController();
+  const ticker = setInterval(() => { if (item.status === 'working') renderCard(item); }, 1000);
   renderCard(item);
   try {
     const text = await extract(item, item.controller.signal);
     if (!state.items.includes(item)) return;
     setResultText(item, text);
     item.status = 'done';
+    item.ms = Date.now() - item.startedAt;
   } catch (err) {
     if (!state.items.includes(item) || err?.name === 'AbortError') return;
     if (err.code === 'BAD_KEY' || err.code === 'DAILY_QUOTA' || err.code === 'BAD_MODEL') {
@@ -340,14 +356,19 @@ async function run(item) {
       item.status = 'queued';
       if (!state.blocked) {
         state.blocked = true;
-        toast(err.message, true);
-        if (err.code !== 'DAILY_QUOTA') openSettings();
+        if (isLocked() && err.code !== 'DAILY_QUOTA') {
+          toast('الإعدادات مقفلة والمفتاح أو النموذج لم يعد يعمل. اطلب من صاحب الأداة رابطاً جديداً.', true);
+        } else {
+          toast(err.message, true);
+          if (err.code !== 'DAILY_QUOTA') openSettings();
+        }
       }
     } else {
       item.status = 'error';
       item.error = err.message || 'حدث خطأ غير معروف.';
     }
   } finally {
+    clearInterval(ticker);
     item.controller = null;
     state.running--;
     renderCard(item);
@@ -420,7 +441,10 @@ async function extract(item, signal) {
     generationConfig: { maxOutputTokens: 8192 },
   };
   // تقليل "التفكير" يسرّع النسخ الحرفي؛ النماذج القديمة لا تدعم هذا الخيار فنحذفه إن رُفض
-  if (!/gemini-(1|2)\./.test(model)) body.generationConfig.thinkingConfig = { thinkingLevel: 'low' };
+  // النسخ الحرفي لا يحتاج "تفكيراً"، وتقليله يختصر وقت كل صورة كثيراً
+  if (!/gemini-(1|2)\./.test(model)) {
+    body.generationConfig.thinkingConfig = { thinkingLevel: MINIMAL_THINKING.test(model) ? 'minimal' : 'low' };
+  }
 
   let netFailures = 0;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -450,7 +474,9 @@ async function extract(item, signal) {
     const reason = JSON.stringify(payload?.error?.details || '');
 
     if (res.status === 400 && body.generationConfig.thinkingConfig && /think/i.test(msg)) {
-      delete body.generationConfig.thinkingConfig;
+      // النموذج لا يقبل هذا المستوى: جرّب low ثم أزل الإعداد كلياً
+      if (body.generationConfig.thinkingConfig.thinkingLevel === 'minimal') body.generationConfig.thinkingConfig.thinkingLevel = 'low';
+      else delete body.generationConfig.thinkingConfig;
       attempt--;
       continue;
     }
@@ -675,8 +701,12 @@ function setupSettings() {
   els.fetchModels.addEventListener('click', fetchModelList);
   document.getElementById('cancelSettings').addEventListener('click', () => els.settings.close('cancel'));
 
-  els.settings.addEventListener('close', () => {
-    if (els.settings.returnValue !== 'save') return;
+  els.settings.addEventListener('close', () => { els.lockPass.value = ''; });
+  els.settingsForm.addEventListener('submit', async e => {
+    if (e.submitter && e.submitter.value !== 'save') return;
+    const newPass = els.lockPass.value;
+    els.lockPass.value = '';
+    if (newPass) await setLock(newPass);
     const key = els.keyInput.value.trim();
     lsSet(LS.key, key);
     let model = els.modelSelect.value === '__custom' ? els.customModel.value.trim() : els.modelSelect.value;
@@ -691,7 +721,14 @@ function setupSettings() {
 }
 
 function openSettings() {
+  if (isLocked()) { openUnlock(); return; }
+  showSettingsDialog();
+}
+
+function showSettingsDialog() {
   els.keyInput.value = getKey();
+  els.lockPass.value = '';
+  renderLockState();
   els.keyInput.type = 'password';
   els.toggleKey.textContent = 'إظهار';
   els.concSelect.value = String(getConc());
@@ -700,6 +737,132 @@ function openSettings() {
   els.settings.returnValue = '';
   if (!els.settings.open) els.settings.showModal();
   if (!els.keyInput.value) els.keyInput.focus();
+}
+
+/* ------------------------------------------------------------------ *
+ *  قفل الإعدادات ورابط المشاركة
+ *  ملاحظة: هذا قفل داخل الصفحة يمنع التعديل العرضي، وليس حماية كاملة؛
+ *  من يعرف أدوات المطوّر في المتصفح يستطيع رؤية المفتاح في طلبات الشبكة.
+ * ------------------------------------------------------------------ */
+const isLocked = () => !!lsGet(LS.lockHash);
+
+const b64u = {
+  enc: buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
+  dec: str => Uint8Array.from(atob(str.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0)),
+};
+
+async function hashPass(pass, saltB64) {
+  const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', hash: 'SHA-256', salt: b64u.dec(saltB64), iterations: 150000 }, material, 256);
+  return b64u.enc(bits);
+}
+
+async function setLock(pass) {
+  const salt = b64u.enc(crypto.getRandomValues(new Uint8Array(16)));
+  lsSet(LS.lockSalt, salt);
+  lsSet(LS.lockHash, await hashPass(pass, salt));
+}
+
+async function checkPass(pass) {
+  const salt = lsGet(LS.lockSalt);
+  if (!salt) return false;
+  return (await hashPass(pass, salt)) === lsGet(LS.lockHash);
+}
+
+function renderLockState() {
+  const locked = isLocked();
+  els.lockState.textContent = locked
+    ? 'الإعدادات مقفلة بكلمة سر. اكتب كلمة جديدة هنا إن أردت تغييرها.'
+    : 'لا توجد كلمة سر بعد. أي شخص يفتح الأداة على هذا الجهاز يستطيع تعديل الإعدادات.';
+  els.removeLock.hidden = !locked;
+  els.lockPass.placeholder = locked ? 'اتركها فارغة إن لم ترد تغييرها' : 'اختر كلمة سر';
+}
+
+function setupLock() {
+  els.removeLock.addEventListener('click', () => {
+    if (!confirm('إزالة كلمة السر؟ سيصبح بإمكان أي شخص على هذا الجهاز تعديل الإعدادات.')) return;
+    lsSet(LS.lockHash, ''); lsSet(LS.lockSalt, '');
+    renderLockState();
+    toast('تمت إزالة كلمة السر.');
+  });
+
+  els.shareBtn.addEventListener('click', async () => {
+    const key = getKey();
+    if (!key) { toast('احفظ مفتاح Gemini أولاً، ثم أنشئ الرابط.', true); return; }
+    if (els.keyInput.value.trim() !== key) { toast('احفظ الإعدادات أولاً، ثم افتحها وأنشئ الرابط.', true); return; }
+    if (!isLocked()) { toast('ضع كلمة سر للإعدادات واحفظها أولاً، حتى لا يستطيع صديقك تعديلها.', true); return; }
+    try {
+      const link = await buildShareLink();
+      copyText(link, els.shareBtn, 'تم نسخ الرابط ✓');
+    } catch {
+      toast('تعذّر إنشاء الرابط في هذا المتصفح.', true);
+    }
+  });
+
+  els.unlockForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    els.unlockMsg.textContent = '';
+    if (await checkPass(els.unlockPass.value)) {
+      els.unlock.close();
+      els.unlockPass.value = '';
+      showSettingsDialog();
+    } else {
+      els.unlockMsg.textContent = 'كلمة السر غير صحيحة.';
+      els.unlockPass.select();
+    }
+  });
+  els.cancelUnlock.addEventListener('click', () => { els.unlockPass.value = ''; els.unlock.close(); });
+  els.forgotLock.addEventListener('click', () => {
+    if (!confirm('لإعادة ضبط الأداة سيُحذف المفتاح وكلمة السر من هذا المتصفح، وستحتاج لإدخال مفتاح Gemini من جديد. هل تريد المتابعة؟')) return;
+    for (const k of [LS.key, LS.lockHash, LS.lockSalt]) lsSet(k, '');
+    els.unlock.close();
+    refreshUI();
+    showSettingsDialog();
+  });
+}
+
+function openUnlock() {
+  els.unlockMsg.textContent = '';
+  els.unlockPass.value = '';
+  if (!els.unlock.open) els.unlock.showModal();
+  els.unlockPass.focus();
+}
+
+// الرابط يحمل الإعدادات مشفّرة بعد علامة # (هذا الجزء لا يُرسل إلى أي خادم، ولا يُحفظ في GitHub)
+async function buildShareLink() {
+  const payload = {
+    v: 1, k: getKey(), m: getModel(), c: getConc(),
+    h: lsGet(LS.lockHash), s: lsGet(LS.lockSalt),
+  };
+  const rawKey = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const aes = await crypto.subtle.importKey('raw', rawKey, 'AES-GCM', false, ['encrypt']);
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, aes, new TextEncoder().encode(JSON.stringify(payload)));
+  return `${location.origin}${location.pathname}#s=${b64u.enc(rawKey)}.${b64u.enc(iv)}.${b64u.enc(ct)}`;
+}
+
+async function applySharedLink() {
+  const m = location.hash.match(/^#s=([\w-]+)\.([\w-]+)\.([\w-]+)$/);
+  if (!m) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  try {
+    const aes = await crypto.subtle.importKey('raw', b64u.dec(m[1]), 'AES-GCM', false, ['decrypt']);
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64u.dec(m[2]) }, aes, b64u.dec(m[3]));
+    const p = JSON.parse(new TextDecoder().decode(plain));
+    if (p.v !== 1 || !p.k || !p.h || !p.s) throw new Error('bad payload');
+    lsSet(LS.key, p.k);
+    lsSet(LS.model, p.m || DEFAULT_MODEL);
+    lsSet(LS.conc, String(p.c || 2));
+    lsSet(LS.lockHash, p.h);
+    lsSet(LS.lockSalt, p.s);
+    state.blocked = false;
+    refreshUI();
+    toast('تم تفعيل الأداة ✓ يمكنك رفع الصور الآن.');
+    pump();
+  } catch {
+    toast('رابط المشاركة غير صالح أو ناقص. اطلب رابطاً جديداً.', true);
+  }
 }
 
 async function fetchModelList() {
